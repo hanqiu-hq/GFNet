@@ -2,76 +2,12 @@ import os
 import json
 
 from torchvision import datasets, transforms
-from torch.utils.data import Dataset
 from torchvision.datasets.folder import ImageFolder, default_loader
 
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.data import create_transform
-""" Stanford Cars (Car) Dataset
-Created: Nov 15,2019 - Yuchong Gu
-Revised: Nov 15,2019 - Yuchong Gu
-"""
 import os
-# import pdb
-from PIL import Image
-import pickle
-# from scipy.io import loadmat
-
-
-
-class CarsDataset(Dataset):
-    """
-    # Description:
-        Dataset for retrieving Stanford Cars images and labels
-    # Member Functions:
-        __init__(self, phase, resize):  initializes a dataset
-            phase:                      a string in ['train', 'val', 'test']
-            resize:                     output shape/size of an image
-        __getitem__(self, item):        returns an image
-            item:                       the idex of image in the whole dataset
-        __len__(self):                  returns the length of dataset
-    """
-
-    def __init__(self, root, train=True, transform=None):
-        self.root = root
-        self.phase = 'train' if train else 'test'
-        # self.resize = resize
-        self.num_classes = 196
-
-        self.images = []
-        self.labels = []
-
-        list_path = os.path.join(root, 'cars_anno.pkl')
-
-        list_mat = pickle.load(open(list_path, 'rb'))
-        num_inst = len(list_mat['annotations']['relative_im_path'][0])
-        for i in range(num_inst):
-            if self.phase == 'train' and list_mat['annotations']['test'][0][i].item() == 0:
-                path = list_mat['annotations']['relative_im_path'][0][i].item()
-                label = list_mat['annotations']['class'][0][i].item()
-                self.images.append(path)
-                self.labels.append(label)
-            elif self.phase != 'train' and list_mat['annotations']['test'][0][i].item() == 1:
-                path = list_mat['annotations']['relative_im_path'][0][i].item()
-                label = list_mat['annotations']['class'][0][i].item()
-                self.images.append(path)
-                self.labels.append(label)
-
-        print('Car Dataset with {} instances for {} phase'.format(len(self.images), self.phase))
-
-        # transform
-        self.transform = transform
-
-    def __getitem__(self, item):
-        # image
-        image = Image.open(os.path.join(self.root, self.images[item])).convert('RGB')  # (C, H, W)
-        image = self.transform(image)
-
-        # return image and label
-        return image, self.labels[item] - 1  # count begin from zero
-
-    def __len__(self):
-        return len(self.images)
+from imagenet_dataset import ImageNetDataset
 
 
 class INatDataset(ImageFolder):
@@ -120,22 +56,24 @@ class INatDataset(ImageFolder):
 def build_dataset(is_train, args, infer_no_resize=False):
     transform = build_transform(is_train, args, infer_no_resize)
 
-    if args.data_set == 'CIFAR100':
-        dataset = datasets.CIFAR100(args.data_path, train=is_train, transform=transform, download=True)
+    if args.data_set == 'CIFAR':
+        dataset = datasets.CIFAR100(args.data_path, train=is_train, transform=transform)
         nb_classes = 100
-    elif args.data_set == 'CIFAR10':
-        dataset = datasets.CIFAR10(args.data_path, train=is_train, transform=transform, download=True)
-        nb_classes = 10
-    elif args.data_set == 'CARS':
-        dataset = CarsDataset(args.data_path, train=is_train, transform=transform)
-        nb_classes = 196
-    elif args.data_set == 'FLOWERS':
-        root = os.path.join(args.data_path, 'train' if is_train else 'test')
-        dataset = datasets.ImageFolder(root, transform=transform)
-        nb_classes = 102
     elif args.data_set == 'IMNET':
-        root = os.path.join(args.data_path, 'train' if is_train else 'val')
-        dataset = datasets.ImageFolder(root, transform=transform)
+        # root = os.path.join(args.data_path, 'train' if is_train else 'val')
+        # dataset = datasets.ImageFolder(root, transform=transform)
+        if is_train:
+            dataset = ImageNetDataset(
+                root_dir=args.root_dir_train,
+                meta_file=args.meta_file_train,
+                transform=transform,
+            )
+        else:
+            dataset = ImageNetDataset(
+                root_dir=args.root_dir_val,
+                meta_file=args.meta_file_val,
+                transform=transform,
+            )
         nb_classes = 1000
     elif args.data_set == 'INAT':
         dataset = INatDataset(args.data_path, train=is_train, year=2018,
@@ -154,21 +92,21 @@ def build_transform(is_train, args, infer_no_resize=False):
         if 'cait' in args.arch and not is_train:
             print('# using cait eval transform')
             transformations = {}
-            transformations= transforms.Compose(
+            transformations = transforms.Compose(
                 [transforms.Resize(args.input_size, interpolation=3),
-                transforms.CenterCrop(args.input_size),
-                transforms.ToTensor(),
-                transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
+                 transforms.CenterCrop(args.input_size),
+                 transforms.ToTensor(),
+                 transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
             return transformations
     
     if infer_no_resize:
         print('# using cait eval transform')
         transformations = {}
-        transformations= transforms.Compose(
+        transformations = transforms.Compose(
             [transforms.Resize(args.input_size, interpolation=3),
-            transforms.CenterCrop(args.input_size),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
+             transforms.CenterCrop(args.input_size),
+             transforms.ToTensor(),
+             transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
         return transformations
 
     resize_im = args.input_size > 32

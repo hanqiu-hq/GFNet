@@ -144,7 +144,12 @@ def get_args_parser():
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
 
-    parser.add_argument('--output_dir', default='',
+    parser.add_argument('--root_dir_train', default='/mnt/lustre/share_data/liuyan/imagenet1k/train/', type=str, help='dataset path')
+    parser.add_argument('--meta_file_train', default='/mnt/lustre/share_data/liuyan/imagenet1k/meta/train.txt', type=str, help='dataset path')
+    parser.add_argument('--root_dir_val', default='/mnt/lustre/share_data/liuyan/imagenet1k/val/', type=str, help='dataset path')
+    parser.add_argument('--meta_file_val', default='/mnt/lustre/share_data/liuyan/imagenet1k/meta/val.txt', type=str, help='dataset path')
+
+    parser.add_argument('--output_dir', default='./results/temp/',
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
