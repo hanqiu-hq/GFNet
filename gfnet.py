@@ -28,6 +28,7 @@ def _cfg(url='', **kwargs):
         **kwargs
     }
 
+
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
@@ -46,10 +47,12 @@ class Mlp(nn.Module):
         x = self.drop(x)
         return x
 
+
 class GlobalFilter(nn.Module):
     def __init__(self, dim, h=14, w=8):
         super().__init__()
-        self.complex_weight = nn.Parameter(torch.randn(h, w, dim, 2, dtype=torch.float32) * 0.02)
+        self.complex_weight = nn.Parameter(torch.randn(h, w, dim // 2, 2, dtype=torch.float32) * 0.02)
+        self.conv = nn.Conv2d(dim // 2, dim // 2, kernel_size=(5, 5), padding=(2, 2), groups=dim // 2)
         self.w = w
         self.h = h
 
@@ -61,17 +64,23 @@ class GlobalFilter(nn.Module):
             a, b = spatial_size
 
         x = x.view(B, a, b, C)
-
         x = x.to(torch.float32)
 
-        x = torch.fft.rfft2(x, dim=(1, 2), norm='ortho')
-        weight = torch.view_as_complex(self.complex_weight)
-        x = x * weight
-        x = torch.fft.irfft2(x, s=(a, b), dim=(1, 2), norm='ortho')
+        fft_x, conv_x = x[:, :, :, :C//2], x[:, :, :, C//2:]
 
+        fft_x = torch.fft.rfft2(fft_x, dim=(1, 2), norm='ortho')
+        weight = torch.view_as_complex(self.complex_weight)
+        fft_x = fft_x * weight
+        fft_x = torch.fft.irfft2(fft_x, s=(a, b), dim=(1, 2), norm='ortho')
+
+        conv_x = conv_x.permute(0, 3, 1, 2)
+        conv_x = self.conv(conv_x).permute(0, 2, 3, 1)
+
+        x = torch.cat([fft_x, conv_x], dim=3)
         x = x.reshape(B, N, C)
 
         return x
+
 
 class Block(nn.Module):
 
@@ -88,6 +97,7 @@ class Block(nn.Module):
         x = x + self.drop_path(self.mlp(self.norm2(self.filter(self.norm1(x)))))
         return x
 
+
 class BlockLayerScale(nn.Module):
 
     def __init__(self, dim, mlp_ratio=4., drop=0., drop_path=0., act_layer=nn.GELU, 
@@ -99,11 +109,12 @@ class BlockLayerScale(nn.Module):
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-        self.gamma = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
+        self.gamma = nn.Parameter(init_values * torch.ones(dim), requires_grad=True)
 
     def forward(self, x):
         x = x + self.drop_path(self.gamma * self.mlp(self.norm2(self.filter(self.norm1(x)))))
         return x
+
 
 class PatchEmbed(nn.Module):
     """ Image to Patch Embedding
@@ -145,6 +156,7 @@ class DownLayer(nn.Module):
         x = self.proj(x).permute(0, 2, 3, 1)
         x = x.reshape(B, -1, self.dim_out)
         return x
+
 
 class GFNet(nn.Module):
     
@@ -265,26 +277,30 @@ class GFNet(nn.Module):
 
 class GFNetPyramid(nn.Module):
     
-    def __init__(self, img_size=224, patch_size=4, num_classes=1000, embed_dim=[64, 128, 256, 512], depth=[2,2,10,4],
-                 mlp_ratio=[4, 4, 4, 4],
-                 drop_rate=0., drop_path_rate=0., norm_layer=None, init_values=0.001, no_layerscale=False, dropcls=0):
+    def __init__(
+            self,
+            img_size=224,
+            patch_size=4,
+            num_classes=1000,
+            embed_dim=[64, 128, 256, 512],
+            depth=[2, 2, 10, 4],
+            mlp_ratio=[4, 4, 4, 4],
+            drop_rate=0.,
+            drop_path_rate=0.,
+            norm_layer=None,
+            init_values=0.001,
+            no_layerscale=False,
+            dropcls=0):
         """
         Args:
             img_size (int, tuple): input image size
             patch_size (int, tuple): patch size
-            in_chans (int): number of input channels
             num_classes (int): number of classes for classification head
             embed_dim (int): embedding dimension
             depth (int): depth of transformer
-            num_heads (int): number of attention heads
             mlp_ratio (int): ratio of mlp hidden dim to embedding dim
-            qkv_bias (bool): enable bias for qkv if True
-            qk_scale (float): override default qk scale of head_dim ** -0.5 if set
-            representation_size (Optional[int]): enable and set representation layer (pre-logits) to this value if set
             drop_rate (float): dropout rate
-            attn_drop_rate (float): attention dropout rate
             drop_path_rate (float): stochastic depth rate
-            hybrid_backbone (nn.Module): CNN backbone to use in-place of PatchEmbed module
             norm_layer: (nn.Module): normalization layer
         """
         super().__init__()
@@ -310,7 +326,6 @@ class GFNetPyramid(nn.Module):
             num_patches = patch_embed.num_patches
             self.patch_embed.append(patch_embed)
 
-
         self.pos_drop = nn.Dropout(p=drop_rate)
         self.blocks = nn.ModuleList()
 
@@ -324,17 +339,26 @@ class GFNetPyramid(nn.Module):
                 print('using standard block')
                 blk = nn.Sequential(*[
                     Block(
-                    dim=embed_dim[i], mlp_ratio=mlp_ratio[i],
-                    drop=drop_rate, drop_path=dpr[cur + j], norm_layer=norm_layer, h=h, w=w)
-                for j in range(depth[i])
+                        dim=embed_dim[i],
+                        mlp_ratio=mlp_ratio[i],
+                        drop=drop_rate,
+                        drop_path=dpr[cur + j],
+                        norm_layer=norm_layer,
+                        h=h,
+                        w=w) for j in range(depth[i])
                 ])
             else:
                 print('using layerscale block')
                 blk = nn.Sequential(*[
                     BlockLayerScale(
-                    dim=embed_dim[i], mlp_ratio=mlp_ratio[i],
-                    drop=drop_rate, drop_path=dpr[cur + j], norm_layer=norm_layer, h=h, w=w, init_values=init_values)
-                for j in range(depth[i])
+                        dim=embed_dim[i],
+                        mlp_ratio=mlp_ratio[i],
+                        drop=drop_rate,
+                        drop_path=dpr[cur + j],
+                        norm_layer=norm_layer,
+                        h=h,
+                        w=w,
+                        init_values=init_values) for j in range(depth[i])
                 ])
             self.blocks.append(blk)
             cur += depth[i]
@@ -352,7 +376,6 @@ class GFNetPyramid(nn.Module):
 
         trunc_normal_(self.pos_embed, std=.02)
         self.apply(self._init_weights)
-
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -389,6 +412,7 @@ class GFNetPyramid(nn.Module):
         x = self.final_dropout(x)
         x = self.head(x)
         return x
+
 
 def resize_pos_embed(posemb, posemb_new):
     # Rescale the grid of position embeddings when loading from state_dict. Adapted from
